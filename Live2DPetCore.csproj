@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      WinExe for the same reason the full engine is: a desktop pet with a console
+      window stuck to it is not a desktop pet. Program.cs borrows a terminal when
+      one is attached, and the log file is written either way.
+    -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <RootNamespace>Live2DPet</RootNamespace>
+    <AssemblyName>Live2DPetCore</AssemblyName>
+    <ApplicationIcon>assets\live2dpet.ico</ApplicationIcon>
+    <LangVersion>latest</LangVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="assets\live2dpet.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
+    Live2D Cubism Core, copied next to the executable. Freely redistributable; see
+    third_party/LICENSE-Live2D-CubismCore.md. It is *not* under this project's
+    licence.
+  -->
+  <ItemGroup>
+    <None Include="third_party\Live2DCubismCore.dll">
+      <Link>Live2DCubismCore.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="third_party\LICENSE-Live2D-CubismCore.md">
+      <Link>LICENSE-Live2D-CubismCore.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
