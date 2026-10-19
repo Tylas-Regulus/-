@@ -41,6 +41,15 @@ internal sealed unsafe class HitTester
     /// the renderer's own culling so invisible things cannot be hit.</summary>
     public float MinimumOpacity { get; set; } = 0.001f;
 
+    /// <summary>Drawables the renderer has been told to leave out. A click falls
+    /// through them to whatever is behind, the same way the picture does.</summary>
+    public bool[] HiddenDrawables { get; set; } = [];
+
+    /// <summary>Patches of a drawable the renderer leaves out by UV. A click falls
+    /// through a patch to whatever is behind, the same way the picture does; the
+    /// rest of that drawable still answers.</summary>
+    public UvDropMap DropUv { get; set; } = UvDropMap.Empty;
+
     /// <summary>
     /// Tests a window pixel against the model. Returns the frontmost drawable
     /// whose geometry covers the point and whose texture is opaque there.
@@ -78,7 +87,12 @@ internal sealed unsafe class HitTester
                 continue;
             }
 
-            if (!TryInterpolateUv(drawable, point, out var uv))
+            if ((uint)index < (uint)HiddenDrawables.Length && HiddenDrawables[index])
+            {
+                continue;
+            }
+
+            if (!TryInterpolateUv(index, drawable, point, out var uv))
             {
                 continue;
             }
@@ -103,7 +117,7 @@ internal sealed unsafe class HitTester
     /// artwork and so has no alpha worth consulting.
     /// </summary>
     public static bool CoversPoint(in DrawableInfo drawable, Vector2 point) =>
-        TryFindTriangle(drawable, point, out _, out _);
+        TryFindTriangle(drawable, point, null, -1, out _, out _);
 
     /// <summary>
     /// Finds the point's UV by locating the triangle that contains it and
@@ -111,11 +125,11 @@ internal sealed unsafe class HitTester
     /// rather than the bounding box is what lets a click pass between the
     /// character's hair and its shoulder.
     /// </summary>
-    private static bool TryInterpolateUv(in DrawableInfo drawable, Vector2 point, out Vector2 uv)
+    private bool TryInterpolateUv(int drawableIndex, in DrawableInfo drawable, Vector2 point, out Vector2 uv)
     {
         uv = default;
 
-        if (!TryFindTriangle(drawable, point, out var corners, out var weights))
+        if (!TryFindTriangle(drawable, point, DropUv, drawableIndex, out var corners, out var weights))
         {
             return false;
         }
@@ -134,6 +148,8 @@ internal sealed unsafe class HitTester
     private static bool TryFindTriangle(
         in DrawableInfo drawable,
         Vector2 point,
+        UvDropMap? dropUv,
+        int drawableIndex,
         out Vector3Int corners,
         out Vector3 weights)
     {
@@ -153,6 +169,21 @@ internal sealed unsafe class HitTester
             if (!TryBarycentric(point, a, b, c, out weights))
             {
                 continue;
+            }
+
+            if (dropUv != null)
+            {
+                var ua = drawable.Uvs[i0];
+                var ub = drawable.Uvs[i1];
+                var uc = drawable.Uvs[i2];
+
+                if (dropUv.Drops(
+                        drawableIndex,
+                        (ua.X + ub.X + uc.X) / 3f,
+                        (ua.Y + ub.Y + uc.Y) / 3f))
+                {
+                    continue;
+                }
             }
 
             corners = new Vector3Int(i0, i1, i2);

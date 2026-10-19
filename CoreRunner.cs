@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime;
 using Live2DPet.Animation;
 using Live2DPet.Cubism;
 using Live2DPet.Model;
@@ -136,7 +137,37 @@ internal static class CoreRunner
             $"{model.TotalIndexCount / 3} triangles, {model.PartIds.Length} parts, " +
             $"{model.ParameterCount} parameters");
 
-        var textures = files.Textures.Select(path => ModelTexture.Load(graphics, path)).ToArray();
+        var lazyTextures = options.LazyTextures || settings.LazyTextures == true;
+        var textureSize = CoreOptions.NormalizeTextureSize(
+            options.TextureSizeSpecified ? options.TextureSize : settings.TextureSize ?? 0);
+        var textures = new ModelTexture[files.Textures.Length];
+
+        for (var i = 0; i < files.Textures.Length; i++)
+        {
+            var path = files.Textures[i];
+            textures[i] = lazyTextures
+                ? ModelTexture.Deferred(graphics, path, textureSize)
+                : ModelTexture.Load(graphics, path, textureSize);
+
+            if (!lazyTextures && textureSize > 0)
+            {
+                // A 4096 PNG decodes to a 64 MiB managed array. Collect between
+                // pages so the next decode reuses the large-object segment
+                // instead of growing a new one for every page.
+                GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            }
+        }
+
+        Log.Info(textureSize > 0
+            ? $"textures: page size cap {textureSize}px"
+            : "textures: page size as authored");
+
+        if (lazyTextures)
+        {
+            Log.Info($"textures: lazy loading on - all {textures.Length} page(s) start on disk");
+        }
+
         using var renderer = new ModelRenderer(graphics, model, textures)
         {
             HighlightMaskedDrawables = options.DebugMasks,
@@ -147,6 +178,30 @@ internal static class CoreRunner
             SkipClippingPass = options.SkipClippingPass,
             DrawEveryFrameMasks = options.MaskEveryFrame,
         };
+
+        string[] hiddenParts = options.HiddenParts.Count > 0
+            ? [.. options.HiddenParts]
+            : settings.HiddenPartsFor(modelPath);
+        string[] decidedHiddenParts = options.HiddenParts.Count > 0 ? hiddenParts : [];
+
+        if (hiddenParts.Length > 0)
+        {
+            renderer.SetHiddenParts(hiddenParts);
+        }
+
+        string[] droppedUv = options.DropUv.Count > 0
+            ? [.. options.DropUv]
+            : settings.DropUvFor(modelPath);
+        string[] decidedDroppedUv = options.DropUv.Count > 0 ? droppedUv : [];
+
+        if (droppedUv.Length > 0)
+        {
+            renderer.SetDropUv(droppedUv);
+        }
+
+        // The watermark can change what the visible artwork is; fit the framing
+        // after the rules have been applied rather than before them.
+        renderer.SetFramingToDefaultPose();
 
         foreach (var drawable in model.Drawables)
         {
@@ -160,23 +215,31 @@ internal static class CoreRunner
         // around: on a machine that cannot do both, the picture gives way, not the
         // frame rate. `--render-scale` pins the quality and stands it down, which is
         // what a measurement wants.
+        var plan = options.PlanSpecified ? options.Plan : settings.Plan ?? AutoPlan.Quality;
         var governor = new QualityGovernor(
             options.Governor && !options.RenderScalePinned,
             options.MinFps,
-            paced: options.TargetFps > 0);
+            options.TargetFps,
+            options.Height,
+            plan);
+        var pacerFps = governor.Enabled ? governor.TargetFps : options.TargetFps;
 
         if (governor.Enabled)
         {
             if (settings.RenderScale is { } rememberedScale)
             {
-                governor.StartAt(rememberedScale);
-                Log.Info($"quality: starting at {governor.RenderScale:F2} (what this machine settled on last run)");
+                governor.StartAt(rememberedScale, settings.RenderFps);
+                Log.Info(
+                    $"quality: starting at {governor.RenderScale:F2} / {governor.TargetFps:F0} FPS " +
+                    (settings.RenderFps is null
+                        ? "(sharpness from last run; no frame rate on record, so starting at the ceiling)"
+                        : "(what this machine settled on last run)"));
             }
 
             renderer.RenderScale = governor.RenderScale;
             Log.Info(
-                $"quality governor: on, defending {options.MinFps:F0} FPS " +
-                $"(budget {governor.BudgetMs:F2}ms), ladder {QualityGovernor.DescribeLadder()}");
+                $"quality governor: on, defending {governor.FloorFps:F0} FPS " +
+                $"(budget {governor.BudgetMs:F2}ms), ladder {governor.DescribeLadder()}");
         }
         else
         {
@@ -262,8 +325,27 @@ internal static class CoreRunner
         var cursor = new CursorTracker(window.Handle, lookRadius);
 
         var hitTester = new HitTester(model, textures);
+        hitTester.HiddenDrawables = renderer.HiddenDrawables;
+        hitTester.DropUv = renderer.DropUvMap;
         var interaction = new PetInteraction(window, hitTester);
-        var pacer = new FramePacer(options.TargetFps);
+        var pacer = new FramePacer(pacerFps);
+
+        void SyncFrameCeiling(string why)
+        {
+            var wanted = governor.Enabled ? governor.TargetFps : options.TargetFps;
+
+            if (Math.Abs(wanted - pacerFps) < 0.001)
+            {
+                return;
+            }
+
+            pacerFps = wanted;
+            pacer.SetTarget(wanted);
+            Log.Info(wanted > 0
+                ? $"frame ceiling: {wanted:F0} FPS ({why})"
+                : $"frame ceiling: none ({why})");
+        }
+
         var stats = new FrameStats();
         var effectsTimer = new PhaseTimer("effects");
         var drawTimer = new PhaseTimer("draw");
@@ -279,21 +361,38 @@ internal static class CoreRunner
         var savedWindowX = settings.WindowX ?? int.MinValue;
         var savedWindowY = settings.WindowY ?? int.MinValue;
         var savedScale = settings.RenderScale ?? -1f;
+        var savedFps = settings.RenderFps ?? -1;
         var savedFocusFollow = window.FocusFollowPointer;
         var focusHandedBack = false;
         var wasDragging = false;
+        var noticeShown = false;
+        var stateCheckCountdown = 30;
+        var stateStamp = settingsPath is { Length: > 0 } && File.Exists(settingsPath)
+            ? File.GetLastWriteTimeUtc(settingsPath)
+            : DateTime.MinValue;
 
         void SaveState()
         {
-            var state = new CoreSettings
-            {
-                WindowX = savedWindowX,
-                WindowY = savedWindowY,
-                RenderScale = savedScale > 0 ? savedScale : null,
-                FocusFollowPointer = savedFocusFollow,
-            };
+            settings.WindowX = savedWindowX;
+            settings.WindowY = savedWindowY;
+            settings.RenderScale = savedScale > 0 ? savedScale : null;
+            settings.RenderFps = savedFps > 0 ? savedFps : null;
+            settings.TextureSize = textureSize;
+            settings.LazyTextures = lazyTextures;
+            settings.Plan = governor.Plan;
+            settings.FocusFollowPointer = savedFocusFollow;
 
-            state.Save(settingsPath);
+            if (decidedHiddenParts.Length > 0)
+            {
+                settings.RememberHiddenParts(modelPath, decidedHiddenParts);
+            }
+
+            if (decidedDroppedUv.Length > 0)
+            {
+                settings.RememberDropUv(modelPath, decidedDroppedUv);
+            }
+
+            settings.Save(settingsPath);
         }
 
         while (window.PumpMessages())
@@ -314,6 +413,65 @@ internal static class CoreRunner
             {
                 swapChain.Resize(window.Width, window.Height);
                 window.ClearResizeFlag();
+            }
+
+            // The editor is gone, but the state file is still the channel a
+            // script or a hand edit uses. Re-read it about twice a second so a
+            // texture-size change reaches the pet that is on screen now.
+            var stateChanged = false;
+
+            if (stateCheckCountdown-- <= 0 && settingsPath is { Length: > 0 } && File.Exists(settingsPath))
+            {
+                stateCheckCountdown = 30;
+                var stamp = File.GetLastWriteTimeUtc(settingsPath);
+
+                if (stamp != stateStamp)
+                {
+                    stateStamp = stamp;
+                    stateChanged = true;
+                }
+            }
+
+            if (stateChanged)
+            {
+                var reread = CoreSettings.Load(settingsPath);
+                var liveTextureSize = CoreOptions.NormalizeTextureSize(
+                    options.TextureSizeSpecified ? options.TextureSize : reread.TextureSize ?? 0);
+
+                if (liveTextureSize != textureSize)
+                {
+                    var previousTextureSize = textureSize;
+                    textureSize = liveTextureSize;
+                    var reloadClock = Stopwatch.StartNew();
+
+                    graphics.Context.ClearState();
+
+                    foreach (var texture in textures)
+                    {
+                        texture.Reload(graphics, textureSize);
+                        GCSettings.LargeObjectHeapCompactionMode =
+                            GCLargeObjectHeapCompactionMode.CompactOnce;
+                        GC.Collect(
+                            GC.MaxGeneration,
+                            GCCollectionMode.Forced,
+                            blocking: true,
+                            compacting: true);
+                    }
+
+                    graphics.Context.Flush();
+                    Log.Info(
+                        $"textures: page size {previousTextureSize} -> {textureSize}, " +
+                        $"reloaded in {reloadClock.ElapsedMilliseconds} ms live");
+                    SaveState();
+                }
+
+                if (!options.PlanSpecified && reread.Plan is { } livePlan && livePlan != governor.Plan)
+                {
+                    governor.SetPlan(livePlan);
+                    SyncFrameCeiling("自动顺序");
+                    Log.Info($"quality: plan {AutoPlans.Label(livePlan)} live");
+                    SaveState();
+                }
             }
 
             var frameMs = stats.Tick();
@@ -363,6 +521,35 @@ internal static class CoreRunner
             });
 
             model.Update();
+
+            if (lazyTextures)
+            {
+                var needed = renderer.PagesInUse();
+
+                for (var page = 0; page < needed.Length; page++)
+                {
+                    if (!needed[page] || textures[page].IsLoaded)
+                    {
+                        continue;
+                    }
+
+                    var loadClock = Stopwatch.StartNew();
+                    textures[page].Load(graphics);
+                    Log.Info($"texture: page {page} loaded on demand in {loadClock.ElapsedMilliseconds} ms");
+
+                    if (textureSize > 0)
+                    {
+                        GCSettings.LargeObjectHeapCompactionMode =
+                            GCLargeObjectHeapCompactionMode.CompactOnce;
+                        GC.Collect(
+                            GC.MaxGeneration,
+                            GCCollectionMode.Forced,
+                            blocking: true,
+                            compacting: true);
+                    }
+                }
+            }
+
             renderer.UploadGeometry();
 
             drawTimer.Measure(() => renderer.Draw(swapChain.RenderTargetView, swapChain.Width, swapChain.Height));
@@ -467,15 +654,18 @@ internal static class CoreRunner
             if (!dragging && Win32.GetWindowRect(window.Handle, out var currentBounds))
             {
                 var scale = governor.Enabled ? governor.RenderScale : renderer.RenderScale;
+                var fpsNow = governor.Enabled ? governor.TargetFps : options.TargetFps;
                 var moved = currentBounds.Left != savedWindowX || currentBounds.Top != savedWindowY;
                 var requalified = MathF.Abs(scale - savedScale) > 0.001f;
+                var reframed = Math.Abs(fpsNow - savedFps) > 0.001;
                 var toggled = window.FocusFollowPointer != savedFocusFollow;
 
-                if (moved || requalified || toggled)
+                if (moved || requalified || reframed || toggled)
                 {
                     savedWindowX = currentBounds.Left;
                     savedWindowY = currentBounds.Top;
                     savedScale = scale;
+                    savedFps = fpsNow;
                     savedFocusFollow = window.FocusFollowPointer;
                     SaveState();
                 }
@@ -485,9 +675,18 @@ internal static class CoreRunner
             if (governor.Enabled && governor.Observe(frameMs) is { } change)
             {
                 renderer.RenderScale = change.RenderScale;
+                SyncFrameCeiling($"level {change.Level + 1}/{governor.LevelCount}");
                 Log.Info(
                     $"quality: render scale -> {change.RenderScale:F2} " +
                     $"(level {change.Level + 1}/{governor.LevelCount}: {change.Reason})");
+            }
+
+            if (!noticeShown && governor.SunkToFloor)
+            {
+                noticeShown = true;
+                Log.Warn(
+                    $"quality: the ladder is exhausted at {governor.FloorFps:F0} FPS; " +
+                    "nothing automatic is left");
             }
 
             if (now >= nextReport)

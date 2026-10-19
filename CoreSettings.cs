@@ -26,7 +26,50 @@ internal sealed class CoreSettings
     /// had to degrade does not spend the first seconds re-learning it.</summary>
     public float? RenderScale { get; set; }
 
+    /// <summary>The frame rate the governor was on when it settled on
+    /// <see cref="RenderScale"/>. Both halves are needed to start where the
+    /// machine left off.</summary>
+    public double? RenderFps { get; set; }
+
+    /// <summary>The atlas page-size cap this machine chose; zero/null is the
+    /// model's own size.</summary>
+    public int? TextureSize { get; set; }
+
+    /// <summary>Whether pages are loaded on demand.</summary>
+    public bool? LazyTextures { get; set; }
+
+    /// <summary>Which lever automatic mode spends first.</summary>
+    public AutoPlan? Plan { get; set; }
+
     public bool? FocusFollowPointer { get; set; }
+
+    public Dictionary<string, List<string>> HiddenPartsByModel { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, List<string>> DropUvByModel { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public string[] HiddenPartsFor(string modelPath) =>
+        HiddenPartsByModel.TryGetValue(modelPath, out var parts) ? [.. parts] : [];
+
+    public string[] DropUvFor(string modelPath) =>
+        DropUvByModel.TryGetValue(modelPath, out var specs) ? [.. specs] : [];
+
+    public void RememberHiddenParts(string modelPath, string[] parts)
+    {
+        if (modelPath.Length > 0 && parts.Length > 0)
+        {
+            HiddenPartsByModel[modelPath] = [.. parts];
+        }
+    }
+
+    public void RememberDropUv(string modelPath, string[] specs)
+    {
+        if (modelPath.Length > 0 && specs.Length > 0)
+        {
+            DropUvByModel[modelPath] = [.. specs];
+        }
+    }
 
     public static CoreSettings Load(string path)
     {
@@ -62,6 +105,40 @@ internal sealed class CoreSettings
                     case "renderScale" when float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var scale):
                         settings.RenderScale = scale;
                         break;
+                    case "renderFps" when double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var renderFps):
+                        settings.RenderFps = renderFps > 0 ? renderFps : null;
+                        break;
+                    case "textureSize" when int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var textureSize):
+                        settings.TextureSize = CoreOptions.NormalizeTextureSize(textureSize);
+                        break;
+                    case "lazyTextures" when bool.TryParse(value, out var lazy):
+                        settings.LazyTextures = lazy;
+                        break;
+                    case "autoPlan" when AutoPlans.TryParse(value, out var plan):
+                        settings.Plan = plan;
+                        break;
+                    case "hideParts":
+                    {
+                        var parts = value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                        if (parts.Length >= 2)
+                        {
+                            settings.HiddenPartsByModel[parts[0]] = [.. parts[1..]];
+                        }
+
+                        break;
+                    }
+                    case "dropUv":
+                    {
+                        var specs = value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                        if (specs.Length >= 2)
+                        {
+                            settings.DropUvByModel[specs[0]] = [.. specs[1..]];
+                        }
+
+                        break;
+                    }
                     case "focusFollow" when bool.TryParse(value, out var focus):
                         settings.FocusFollowPointer = focus;
                         break;
@@ -105,9 +182,45 @@ internal sealed class CoreSettings
                 lines.Add($"renderScale={RenderScale.Value.ToString("F2", CultureInfo.InvariantCulture)}");
             }
 
+            if (RenderFps.HasValue)
+            {
+                lines.Add($"renderFps={RenderFps.Value.ToString("0.###", CultureInfo.InvariantCulture)}");
+            }
+
+            if (TextureSize.HasValue)
+            {
+                lines.Add($"textureSize={TextureSize.Value}");
+            }
+
+            if (LazyTextures.HasValue)
+            {
+                lines.Add($"lazyTextures={(LazyTextures.Value ? "true" : "false")}");
+            }
+
+            if (Plan.HasValue)
+            {
+                lines.Add($"autoPlan={AutoPlans.Key(Plan.Value)}");
+            }
+
             if (FocusFollowPointer.HasValue)
             {
                 lines.Add($"focusFollow={(FocusFollowPointer.Value ? "true" : "false")}");
+            }
+
+            foreach (var (model, parts) in HiddenPartsByModel)
+            {
+                if (parts.Count > 0)
+                {
+                    lines.Add($"hideParts={model}|{string.Join("|", parts)}");
+                }
+            }
+
+            foreach (var (model, specs) in DropUvByModel)
+            {
+                if (specs.Count > 0)
+                {
+                    lines.Add($"dropUv={model}|{string.Join("|", specs)}");
+                }
             }
 
             File.WriteAllLines(path, lines);

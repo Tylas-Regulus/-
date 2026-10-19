@@ -178,6 +178,92 @@ internal sealed unsafe class ModelRenderer : IDisposable
     /// then read stale masks, so the picture is wrong on purpose.</summary>
     public bool SkipClippingPass { get; set; }
 
+    /// <summary>
+    /// What the clipping mask's texture is framed on: the shapes that define it, or
+    /// everything those shapes clip. On by default, which is the wider box: artwork
+    /// that reaches outside its shape is then still covered by the mask instead of
+    /// being cut off along the box's edge. The narrower choice is the Cubism SDK's,
+    /// and it is kept as a switch so the two can be captured and compared - the
+    /// difference between them on the models here is a handful of pixels.
+    ///
+    /// This property exists because the switch used to do nothing: the option was
+    /// parsed and then never handed to the layout, so <c>--clip-frame</c> produced
+    /// two identical runs. See <c>--clip-frame</c>.
+    /// </summary>
+    public bool FrameClippingOnContent { get; set; }
+
+    /// <summary>
+    /// Where the pet is inside the window, as fractions of the window: the art that
+    /// is actually on screen right now, mapped through the framing.
+    ///
+    /// Resizing is anchored on this rather than on the window, so the character
+    /// grows about its own middle. See <see cref="CubismModel.ComputeVisiblePoseBounds"/>
+    /// for why "the art that is on screen" is not the same as "the model's box".
+    /// </summary>
+    public (float Left, float Top, float Right, float Bottom) PetBoundsFraction(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return (0.25f, 0.25f, 0.75f, 0.75f);
+        }
+
+        var (minX, minY, maxX, maxY) = _model.ComputeVisiblePoseBounds();
+
+        if (!float.IsFinite(minX) || maxX - minX <= 0f || maxY - minY <= 0f)
+        {
+            return (0f, 0f, 1f, 1f);
+        }
+
+        // Model y grows upwards and window y grows downwards, so the model's top is
+        // the window's smaller y.
+        var topLeft = _framing.ToWindow(minX, maxY, width, height);
+        var bottomRight = _framing.ToWindow(maxX, minY, width, height);
+
+        return (
+            Math.Clamp(topLeft.X / width, 0f, 1f),
+            Math.Clamp(topLeft.Y / height, 0f, 1f),
+            Math.Clamp(bottomRight.X / width, 0f, 1f),
+            Math.Clamp(bottomRight.Y / height, 0f, 1f));
+    }
+
+    /// <summary>The pet's own centre in model space: the point a zoom turns
+    /// around. See <see cref="ModelFraming.ScaledAbout"/> for why it is the pet's
+    /// centre rather than the frame's.</summary>
+    public (float X, float Y) VisibleCentreModel()
+    {
+        var (minX, minY, maxX, maxY) = _model.ComputeVisiblePoseBounds();
+
+        if (!float.IsFinite(minX) || !float.IsFinite(minY) || maxX - minX <= 0f || maxY - minY <= 0f)
+        {
+            return (_framing.CentreX, _framing.CentreY);
+        }
+
+        return ((minX + maxX) * 0.5f, (minY + maxY) * 0.5f);
+    }
+
+    /// <summary>The pet's own size in model units, for turning "this many pixels
+    /// tall on screen" into a view. See <see cref="EngineRunner"/>'s zoom.</summary>
+    public (float Width, float Height) VisibleSizeModel()
+    {
+        var (minX, minY, maxX, maxY) = _model.ComputeVisiblePoseBounds();
+
+        if (!float.IsFinite(minX) || !float.IsFinite(minY) || maxX - minX <= 0f || maxY - minY <= 0f)
+        {
+            return (_framing.Width, _framing.Height);
+        }
+
+        return (maxX - minX, maxY - minY);
+    }
+
+    /// <summary>Where to write every mask buffer after the first mask pass, as raw
+    /// RGBA, one file per buffer. Diagnostic: the mask buffers are the one part of
+    /// this pipeline nobody can look at, and "the picture is wrong" says nothing
+    /// about whether a mask was drawn wrong or sampled wrong. See
+    /// <c>--dump-masks</c>.</summary>
+    public string? MaskDumpDirectory { get; set; }
+
+    private bool _maskDumped;
+
     /// <summary>Draws masked ArtMeshes in a flat magenta so the parts affected
     /// by the clipping implementation can be seen. Diagnostic only.</summary>
     public bool HighlightMaskedDrawables
@@ -206,6 +292,17 @@ internal sealed unsafe class ModelRenderer : IDisposable
     /// click back into model space.</summary>
     public ModelFraming Framing => _framing;
 
+    /// <summary>
+    /// Points the view at a different rectangle of model space.
+    ///
+    /// The zoom is the only thing that calls this, and it is deliberately the
+    /// whole of the zoom: the picture, the hit test, the clipping layouts and the
+    /// window's shape all read this one value, so none of them can be told to
+    /// disagree about where the pet is or how big it is. See
+    /// <see cref="ModelFraming.Scaled"/>.
+    /// </summary>
+    public void SetFraming(in ModelFraming framing) => _framing = framing;
+
     /// <summary>Indices of drawables that act as clipping shapes for something
     /// else. Tinted green when <see cref="HighlightMaskedDrawables"/> is on, so
     /// the clip shape and the clipped content can be compared in one frame.</summary>
@@ -215,8 +312,8 @@ internal sealed unsafe class ModelRenderer : IDisposable
     /// Drawables to pick out of the picture: they are tinted and everything else
     /// is dimmed so that one part of a 269 drawable model can be recognised.
     ///
-    /// The editor is the reason this exists. This model's parts are called
-    /// `Part14` and `ArtMesh37_Skinning`, and no name like that tells anyone what
+    /// The debug tint is the reason this exists. A model's parts are called
+    /// `SomePart` and `SomeMesh_Skinning`, and no name like that tells anyone what
     /// it is - but lighting it up on the model does, immediately, and it is the
     /// same picture the user is looking at rather than a diagram of it.
     /// </summary>
@@ -557,7 +654,7 @@ internal sealed unsafe class ModelRenderer : IDisposable
 
             if (MasksNeedDraw())
             {
-                _masks.UpdateLayouts(_model);
+                _masks.UpdateLayouts(_model, FrameClippingOnContent);
                 _maskTimer.Measure(RenderMaskBuffers);
                 InvalidateStateCache();
                 RememberMaskPositions();
@@ -579,7 +676,12 @@ internal sealed unsafe class ModelRenderer : IDisposable
         var targetWidth = viewportWidth;
         var targetHeight = viewportHeight;
 
-        if (RenderScale < 0.999f &&
+        // Any scale but 1.0 goes through the offscreen target: below it the
+        // picture is drawn small and stretched, above it drawn large and shrunk.
+        // The second direction is supersampling - the one answer to thin artwork
+        // that shimmers, because a strand narrower than a pixel is then averaged
+        // into the pixels it covers instead of landing in one of them or none.
+        if (MathF.Abs(RenderScale - 1f) > 0.001f &&
             _upscaler.EnsureTarget(viewportWidth, viewportHeight, RenderScale) is { } scaled)
         {
             target = scaled;
@@ -617,6 +719,21 @@ internal sealed unsafe class ModelRenderer : IDisposable
         if (!ReferenceEquals(target, renderTarget))
         {
             _upscaler.Blit(renderTarget, viewportWidth, viewportHeight);
+
+            // The blit binds the offscreen result to shader slot 0, and this
+            // renderer's cache of what is bound cannot see that. Left stale, the
+            // first batch of the next frame draws itself with the upscaler's
+            // texture instead of its own - on this model the back-most draws,
+            // which is the tail and the hair behind her shoulders.
+            //
+            // It hid for a long time because drawing the mask pass invalidates
+            // this cache, so the picture was right on exactly the frames the
+            // masks were redrawn and wrong on the frames they were skipped - and
+            // at render scale 1.00 there is no blit and nothing to get wrong.
+            // That is the whole of "the tail and the long hair flicker": a part
+            // that is present and absent on alternate frames, on every machine
+            // slow enough to be given a reduced render scale.
+            InvalidateStateCache();
         }
 
         _gpuTimer.EndFrame();
@@ -633,6 +750,219 @@ internal sealed unsafe class ModelRenderer : IDisposable
     /// box, which is conservative - it can refuse a merge that would have been
     /// fine, never accept one that would have been wrong.
     /// </summary>
+    /// <summary>
+    /// Drawables the renderer has been told to leave out, and the part names that
+    /// said so.
+    ///
+    /// A model can carry artwork that is not the character - a watermark, a
+    /// signature, a version plate - and while the model is being looked at that
+    /// artwork is in the way rather than part of the picture. This is the switch for
+    /// taking it out of the picture without touching the model, the same idea as
+    /// <c>--no-clip</c> one level up. The mask pass deliberately still draws these
+    /// drawables: a clipping shape is not the artwork, and leaving one out of a
+    /// shared context would change what the parts using that context look like.
+    /// </summary>
+    public string[] HiddenParts { get; private set; } = [];
+
+    /// <summary>Per-drawable flags, for the hit tester, so a click falls through a
+    /// hidden part to whatever is behind it instead of stopping on artwork nobody
+    /// can see.</summary>
+    public bool[] HiddenDrawables { get; private set; } = [];
+
+    /// <summary>Patches of artwork left out by UV, for the hit tester, so a click
+    /// falls through them to whatever is behind instead of stopping on artwork
+    /// that is not drawn.</summary>
+    public UvDropMap DropUvMap { get; private set; } = UvDropMap.Empty;
+
+    /// <summary>What was asked for, in the text form it was given, so a model
+    /// switch can hand it to the process it starts.</summary>
+    public string[] DropUvSpecs { get; private set; } = [];
+
+    public void SetHiddenParts(string[] parts)
+    {
+        HiddenParts = parts;
+
+        var drawables = _model.Drawables;
+        HiddenDrawables = new bool[drawables.Length];
+
+        if (parts.Length == 0)
+        {
+            return;
+        }
+
+        var hidden = 0;
+
+        for (var i = 0; i < drawables.Length; i++)
+        {
+            var part = drawables[i].PartIndex;
+            var name = (uint)part < (uint)_model.PartIds.Length ? _model.PartIds[part] : string.Empty;
+
+            foreach (var filter in parts)
+            {
+                // The part's name, and the drawable's own name. A part is the
+                // author's grouping and the drawable is the artwork, and the two
+                // do not always line up: a model can carry a line of text whose
+                // pieces sit in parts named after something else entirely. Both
+                // names are accepted here, so a piece of artwork can be pointed at
+                // by either of the names the model actually has for it.
+                if (filter.Length > 0 &&
+                    (name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                     drawables[i].Id.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+                {
+                    HiddenDrawables[i] = true;
+                    hidden++;
+                    break;
+                }
+            }
+        }
+
+        Log.Info($"hide-part: {hidden} drawable(s) left out for '{string.Join("', '", parts)}'");
+    }
+
+    /// <summary>
+    /// Leaves patches of a drawable's artwork out of the picture by UV rectangle.
+    ///
+    /// <see cref="SetHiddenParts"/> works at the drawable's own granularity, and
+    /// a model can keep a watermark and real artwork in one drawable - then they
+    /// are either both drawn or neither. A patch of the texture is finer: the
+    /// triangles that sit inside it are simply not submitted, so the rest of the
+    /// drawable's artwork stays exactly where it was. The rule holds for every
+    /// pose, because UVs do not move with the mesh.
+    ///
+    /// Each spec is <c>drawable:u0,v0,u1,v1</c>, and the drawable is matched the
+    /// same way <c>--hide-part</c> matches names, by substring.
+    /// </summary>
+    public void SetDropUv(string[] specs)
+    {
+        DropUvSpecs = specs;
+
+        var drawables = _model.Drawables;
+
+        if (specs.Length == 0 || drawables.Length == 0)
+        {
+            DropUvMap = UvDropMap.Empty;
+            return;
+        }
+
+        var rects = new List<UvRect>?[drawables.Length];
+
+        foreach (var spec in specs)
+        {
+            var colon = spec.LastIndexOf(':');
+
+            if (colon <= 0 || !UvRect.TryParse(spec[(colon + 1)..], out var rect))
+            {
+                Log.Warn($"drop-uv: cannot read '{spec}' (want drawable:u0,v0,u1,v1)");
+                continue;
+            }
+
+            var filter = spec[..colon].Trim();
+            var matched = 0;
+            var dropped = 0;
+
+            for (var i = 0; i < drawables.Length; i++)
+            {
+                var drawable = drawables[i];
+
+                if (drawable.IndexCount < 3 ||
+                    !drawable.Id.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                (rects[i] ??= []).Add(rect);
+                matched++;
+
+                for (var t = 0; t + 2 < drawable.IndexCount; t += 3)
+                {
+                    TriangleCenterUv(drawable, t, out var u, out var v);
+
+                    if (rect.Contains(u, v))
+                    {
+                        dropped++;
+                    }
+                }
+            }
+
+            if (matched == 0)
+            {
+                Log.Warn($"drop-uv: no drawable called '{filter}'");
+            }
+            else
+            {
+                Log.Info($"drop-uv: {dropped} triangle(s) left out for '{filter}' ({matched} drawable(s))");
+            }
+        }
+
+        DropUvMap = new UvDropMap(rects);
+    }
+
+    /// <summary>The centroid of the triangle starting at <paramref name="first"/>,
+    /// in texture coordinates.</summary>
+    private static void TriangleCenterUv(in DrawableInfo drawable, int first, out float u, out float v)
+    {
+        var a = drawable.Uvs[drawable.Indices[first]];
+        var b = drawable.Uvs[drawable.Indices[first + 1]];
+        var c = drawable.Uvs[drawable.Indices[first + 2]];
+
+        u = (a.X + b.X + c.X) / 3f;
+        v = (a.Y + b.Y + c.Y) / 3f;
+    }
+
+    private bool IsHidden(int drawableIndex) =>
+        (uint)drawableIndex < (uint)HiddenDrawables.Length && HiddenDrawables[drawableIndex];
+
+    /// <summary>
+    /// The texture pages this frame's picture needs: the page of every drawable
+    /// that is drawn, plus the pages of the clipping shapes those drawables are
+    /// clipped by (the mask pass draws them even when their own artwork is
+    /// hidden). A deferred page outside this set is not sampled this frame, so
+    /// leaving it on disk cannot change the picture.
+    /// </summary>
+    public bool[] PagesInUse()
+    {
+        var pages = new bool[_textures.Length];
+        var drawables = _model.Drawables;
+
+        for (var slot = 0; slot < _model.RenderSequence.Length; slot++)
+        {
+            var index = _model.RenderSequence[slot];
+            var drawable = drawables[index];
+
+            if (drawable.IndexCount == 0 || drawable.VertexCount == 0 ||
+                !_model.IsDrawableVisible(index) ||
+                _model.GetDrawableOpacity(index) <= 0.001f ||
+                IsHidden(index))
+            {
+                continue;
+            }
+
+            if ((uint)drawable.TextureIndex < (uint)pages.Length)
+            {
+                pages[drawable.TextureIndex] = true;
+            }
+
+            var context = _masks.ContextForDrawable(index);
+
+            if ((uint)context >= (uint)_masks.Contexts.Length)
+            {
+                continue;
+            }
+
+            foreach (var source in _masks.Contexts[context].MaskDrawables)
+            {
+                var sourceTexture = drawables[source].TextureIndex;
+
+                if ((uint)sourceTexture < (uint)pages.Length)
+                {
+                    pages[sourceTexture] = true;
+                }
+            }
+        }
+
+        return pages;
+    }
+
     private void PlanBatches()
     {
         _batches.Clear();
@@ -655,6 +985,11 @@ internal sealed unsafe class ModelRenderer : IDisposable
             }
 
             if (_model.GetDrawableOpacity(index) <= 0.001f)
+            {
+                continue;
+            }
+
+            if (IsHidden(index))
             {
                 continue;
             }
@@ -751,10 +1086,46 @@ internal sealed unsafe class ModelRenderer : IDisposable
             {
                 var drawable = drawables[member];
                 var baseVertex = _vertexStart[member];
+                var dropped = DropUvMap.For(member);
 
-                for (var k = 0; k < drawable.IndexCount; k++)
+                if (dropped == null)
                 {
-                    _indexData[cursor++] = (uint)(baseVertex + drawable.Indices[k]);
+                    for (var k = 0; k < drawable.IndexCount; k++)
+                    {
+                        _indexData[cursor++] = (uint)(baseVertex + drawable.Indices[k]);
+                    }
+
+                    continue;
+                }
+
+                // Triangles are either fully in a kept patch or fully out of it:
+                // the centroid decides, which is exact for artwork whose islands
+                // sit wholly inside or wholly outside the rectangle - the case
+                // this was built for. A triangle straddling the border would go
+                // with the side its middle is on.
+                for (var t = 0; t + 2 < drawable.IndexCount; t += 3)
+                {
+                    TriangleCenterUv(drawable, t, out var u, out var v);
+
+                    var keep = true;
+
+                    for (var r = 0; r < dropped.Count; r++)
+                    {
+                        if (dropped[r].Contains(u, v))
+                        {
+                            keep = false;
+                            break;
+                        }
+                    }
+
+                    if (!keep)
+                    {
+                        continue;
+                    }
+
+                    _indexData[cursor++] = (uint)(baseVertex + drawable.Indices[t]);
+                    _indexData[cursor++] = (uint)(baseVertex + drawable.Indices[t + 1]);
+                    _indexData[cursor++] = (uint)(baseVertex + drawable.Indices[t + 2]);
                 }
             }
 
@@ -1107,6 +1478,64 @@ internal sealed unsafe class ModelRenderer : IDisposable
             context.DrawIndexed((uint)batch.IndexCount, (uint)batch.IndexStart, 0);
             LastMaskDrawCallCount++;
         }
+
+        DumpMaskBuffers();
+    }
+
+    /// <summary>
+    /// Copies every mask buffer out to <see cref="MaskDumpDirectory"/> once, after a
+    /// frame's shapes have been drawn.
+    ///
+    /// Raw RGBA rather than an image: 256x256x4 bytes per buffer, which is the
+    /// texture's own layout, and whoever reads it knows which channel held which
+    /// context from the log's "context n: buffer b channel c" lines.
+    /// </summary>
+    private void DumpMaskBuffers()
+    {
+        if (_maskDumped || MaskDumpDirectory is not { Length: > 0 } directory)
+        {
+            return;
+        }
+
+        _maskDumped = true;
+        Directory.CreateDirectory(directory);
+
+        var context = _graphics.Context;
+
+        for (var i = 0; i < _masks.BufferCount; i++)
+        {
+            using var staging = _graphics.Device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = ClippingMasks.BufferSize,
+                Height = ClippingMasks.BufferSize,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.R8G8B8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Staging,
+                BindFlags = BindFlags.None,
+                CPUAccessFlags = CpuAccessFlags.Read,
+                MiscFlags = ResourceOptionFlags.None,
+            });
+
+            context.CopyResource(staging, _masks.Texture(i));
+
+            var mapped = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+            var rowBytes = ClippingMasks.BufferSize * 4;
+            var pixels = new byte[rowBytes * ClippingMasks.BufferSize];
+
+            for (var y = 0; y < ClippingMasks.BufferSize; y++)
+            {
+                var source = (byte*)mapped.DataPointer + y * mapped.RowPitch;
+                Marshal.Copy((nint)source, pixels, y * rowBytes, rowBytes);
+            }
+
+            context.Unmap(staging, 0);
+
+            File.WriteAllBytes(Path.Combine(directory, $"mask-{i:D2}.raw"), pixels);
+        }
+
+        Log.Info($"mask dump: {_masks.BufferCount} buffer(s) written to {directory}");
     }
 
     private void InvalidateStateCache()

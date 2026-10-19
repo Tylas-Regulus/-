@@ -201,6 +201,18 @@ internal sealed class CompositionSwapChain : IDisposable
             SampleDescription = new SampleDescription(1, 0),
             BufferUsage = Usage.RenderTargetOutput,
             BufferCount = 2,
+            // Stretch is the only scaling a composition swap chain accepts - None
+            // comes back as an invalid call. It is also the reason the window is
+            // never resized while the pet has a picture on screen: with Stretch, the
+            // buffer the compositor already has is rescaled to the size the window
+            // has *become*, so the frame before a resize is shown at the wrong scale
+            // and in the wrong place until the next one arrives - measured on this
+            // engine as the pet jumping by its own offset inside the window for one
+            // frame. The window is therefore built once, at the largest the pet can
+            // get, and a zoom moves the view instead - see EngineRunner.
+            //
+            // Stretch also means the buffer must keep matching the window: a swap
+            // chain larger than its window would be scaled down into it.
             Scaling = Scaling.Stretch,
             SwapEffect = SwapEffect.FlipDiscard,
             AlphaMode = _useComposition ? AlphaMode.Premultiplied : AlphaMode.Ignore,

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Live2DPet.Serialization;
 
 namespace Live2DPet.Motion;
 
@@ -64,7 +65,7 @@ internal sealed class Motion3Json
     public static Motion3Json Load(string path)
     {
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<Motion3Json>(json)
+        return JsonSerializer.Deserialize(json, PetJson.Default.Motion3Json)
                ?? throw new InvalidDataException($"could not parse {path}");
     }
 }

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Live2DPet.Serialization;
 
 namespace Live2DPet.Physics;
 
@@ -175,7 +176,7 @@ internal sealed class Physics3Json
 
     public static Physics3Json Load(string path)
     {
-        return JsonSerializer.Deserialize<Physics3Json>(File.ReadAllText(path))
+        return JsonSerializer.Deserialize(File.ReadAllText(path), PetJson.Default.Physics3Json)
                ?? throw new InvalidDataException($"could not parse {path}");
     }
 }

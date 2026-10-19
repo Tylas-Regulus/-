@@ -10,8 +10,8 @@ namespace Live2DPet.Rendering;
 /// Nothing here is hardcoded to a character. Cubism models declare their own
 /// regions in <c>.model3.json</c>:
 ///
-///     "HitAreas": [ { "Name": "Head", "Id": "D_ArtMesh12" },
-///                   { "Name": "Body", "Id": "D_ArtMesh30" } ]
+///     "HitAreas": [ { "Name": "Head", "Id": "D_SomeMesh1" },
+///                   { "Name": "Body", "Id": "D_SomeMesh2" } ]
 ///
 /// Each entry names a drawable that acts as the region's shape - usually an
 /// invisible quad covering the area, not the artwork itself. A model with a tail
@@ -64,7 +64,7 @@ internal sealed class HitZones
     ///
     /// Regions come from the model, so before this existed a model that never
     /// declared `HitAreas` could only ever have one zone: everything is
-    /// `Part14`, `Part18`, `ArtMesh37_Skinning`, and nobody can write a rule
+    /// `SomePart`, `AnotherPart`, `SomeMesh_Skinning`, and nobody can write a rule
     /// against a name like that. An alias is the missing half - it does not
     /// touch the model, it just means the engine calls the part what its owner
     /// calls it, everywhere the raw name would have appeared.
@@ -75,8 +75,8 @@ internal sealed class HitZones
     /// Whether the rules file already has a zone by this name.
     ///
     /// The second half of the same idea: a raw name is normally not a region,
-    /// because reporting `Part18` as one looks like a feature while carrying no
-    /// meaning. But a file that says `Part18` *is* a zone is a file whose owner
+    /// because reporting `AnotherPart` as one looks like a feature while carrying
+    /// no meaning. But a file that says `AnotherPart` *is* a zone is a file whose owner
     /// decided that - a name in use is a name, whatever shape it has, and
     /// refusing it here would make a binding that looks like it works never
     /// fire.
@@ -119,9 +119,9 @@ internal sealed class HitZones
                     return alias;
                 }
 
-                // So is a name the file already uses: the editor offers parts
-                // as they are clicked, so a rule can be written against
-                // `Part18` without anybody having to invent a prettier name
+                // So is a name the caller already uses: a diagnostic can offer
+                // parts as they are clicked, so a rule can be written against
+                // `SomePart` without anybody having to invent a prettier name
                 // for it first.
                 if (KnownNames?.Invoke(part) == true)
                 {
@@ -129,7 +129,7 @@ internal sealed class HitZones
                 }
 
                 // Only if the artist actually named it. Exports routinely leave
-                // parts as "Part14" and "ArtMesh37_Skinning", and reporting
+                // parts as "SomePart" and "SomeMesh_Skinning", and reporting
                 // those as regions is worse than admitting there is no region:
                 // it would look like a feature while carrying no meaning, and
                 // no motion group is ever named after them.

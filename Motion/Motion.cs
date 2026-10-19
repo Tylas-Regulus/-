@@ -164,8 +164,8 @@ internal sealed class Motion
     /// never change is a *pose* wearing a motion's file format - which is how an
     /// author ships a prop that should appear and then sit still. Nothing in the
     /// file says which kind it is, but the curves do, so the engine can tell
-    /// without anybody tagging anything: that is what makes the moving-or-still
-    /// choice work on a model nobody has described to us.
+    /// without anybody tagging anything: that is what makes the 动态/静态 choice
+    /// work on a model nobody has described to us.
     /// </summary>
     public bool IsAnimated { get; private init; }
 

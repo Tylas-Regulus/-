@@ -34,6 +34,43 @@ internal struct ModelFraming
 
     public readonly float Height => MathF.Max(MaxY - MinY, 1e-3f);
 
+    /// <summary>
+    /// The same view, zoomed about a point of model space: at factor 2 the frame
+    /// shows twice as much in each direction, at 0.5 half as much.
+    ///
+    /// This is what the pet's zoom is made of, and the reason it is cheap. The
+    /// frame is what is drawn into the window, so scaling it makes the model
+    /// bigger without the window knowing anything happened.
+    ///
+    /// The point to scale about is the pet's own centre and not the frame's,
+    /// which is the difference between a character that grows and one that grows
+    /// and slides. A frame is fitted to the model's *default pose*, and the pet
+    /// usually sits off that centre - on the model this was measured with, at
+    /// 0.591,0.744 of the window rather than 0.5,0.5. Growing about the frame's
+    /// middle drags that offset towards the middle as the frame shrinks, which
+    /// measured as the pet walking 44 pixels up a 666 pixel window over one zoom.
+    /// Scaling about the pet's own centre leaves its place as a fraction of the
+    /// window exactly where it was, at every frame of the movement.
+    ///
+    /// Factor 1 returns the frame unchanged, so a settled zoom is the startup
+    /// framing to the last bit rather than a near miss.
+    /// </summary>
+    public readonly ModelFraming ScaledAbout(float factor, float centreX, float centreY)
+    {
+        if (factor == 1f)
+        {
+            return this;
+        }
+
+        return new ModelFraming
+        {
+            MinX = centreX + (MinX - centreX) * factor,
+            MinY = centreY + (MinY - centreY) * factor,
+            MaxX = centreX + (MaxX - centreX) * factor,
+            MaxY = centreY + (MaxY - centreY) * factor,
+        };
+    }
+
     /// <summary>Model units per pixel, equal on both axes so pixels stay square.</summary>
     public readonly float UnitsPerPixel(int viewportWidth, int viewportHeight) =>
         MathF.Min(Width / viewportWidth, Height / viewportHeight);

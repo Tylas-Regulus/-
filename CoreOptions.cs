@@ -41,6 +41,32 @@ internal sealed class CoreOptions
 
     public bool Governor { get; private set; } = true;
 
+    /// <summary>Which lever automatic mode spends first: frames or picture.
+    /// <c>--auto-plan quality|framerate</c>; the default is the same as the
+    /// full engine's.</summary>
+    public AutoPlan Plan { get; private set; } = AutoPlan.Quality;
+
+    public bool PlanSpecified { get; private set; }
+
+    /// <summary>Keep atlas pages on disk until something on them is visible.
+    /// <c>--lazy-textures</c>.</summary>
+    public bool LazyTextures { get; private set; }
+
+    /// <summary>The largest a texture page may be, in pixels on its long edge;
+    /// zero keeps the model's own size. <c>--texture-size</c>.</summary>
+    public int TextureSize { get; private set; }
+
+    public bool TextureSizeSpecified { get; private set; }
+
+    /// <summary>Parts to leave out, matched by part or drawable name.</summary>
+    public List<string> HiddenParts { get; } = [];
+
+    /// <summary>UV patches to leave out, in <c>drawable:u0,v0,u1,v1</c> form.</summary>
+    public List<string> DropUv { get; } = [];
+
+    public static int NormalizeTextureSize(int value) =>
+        value <= 0 ? 0 : Math.Clamp(value, 256, 8192);
+
     public bool Batching { get; private set; } = true;
 
     public bool SoftwareRasterizer { get; private set; }
@@ -166,6 +192,43 @@ internal sealed class CoreOptions
                 case "--governor":
                     options.Governor = !string.Equals(Next(), "off", StringComparison.OrdinalIgnoreCase);
                     break;
+                case "--auto-plan":
+                    if (AutoPlans.TryParse(Next() ?? string.Empty, out var plan))
+                    {
+                        options.Plan = plan;
+                        options.PlanSpecified = true;
+                    }
+                    break;
+                case "--lazy-textures":
+                    options.LazyTextures = true;
+                    break;
+                case "--texture-size":
+                    options.TextureSize = NormalizeTextureSize(
+                        int.TryParse(Next(), out var textureSize) ? textureSize : 0);
+                    options.TextureSizeSpecified = true;
+                    break;
+                case "--hide-part":
+                {
+                    var part = Next();
+
+                    if (!string.IsNullOrWhiteSpace(part))
+                    {
+                        options.HiddenParts.Add(part);
+                    }
+
+                    break;
+                }
+                case "--drop-uv":
+                {
+                    var spec = Next();
+
+                    if (!string.IsNullOrWhiteSpace(spec))
+                    {
+                        options.DropUv.Add(spec);
+                    }
+
+                    break;
+                }
                 case "--warp":
                     options.SoftwareRasterizer = true;
                     break;
@@ -296,6 +359,11 @@ internal sealed class CoreOptions
           --min-fps <n>       the floor the governor defends (default 60)
           --render-scale <f>  pin the render quality, 0.2 to 1 (stands the governor down)
           --governor <on|off> trade render quality for frame rate (default on)
+          --auto-plan <quality|framerate>  which lever automatic mode spends first
+          --lazy-textures     keep atlas pages on disk until the picture needs them
+          --texture-size <px> cap each atlas page's long edge (0 = as authored)
+          --hide-part <name>  leave a part/drawable out; repeatable
+          --drop-uv <spec>    leave a UV patch out; drawable:u0,v0,u1,v1
           --no-motion         do not play motions
           --no-fx             no blink, breath or gaze
           --no-physics        no physics

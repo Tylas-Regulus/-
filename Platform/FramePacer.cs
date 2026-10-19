@@ -24,7 +24,7 @@ internal sealed class FramePacer : IDisposable
     private const uint TimerAllAccess = 0x1F0003;
     private const uint Infinite = 0xFFFFFFFF;
 
-    private readonly double _targetSeconds;
+    private double _targetSeconds;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private nint _timer;
     private double _nextFrameTime;
@@ -38,6 +38,18 @@ internal sealed class FramePacer : IDisposable
         {
             Log.Warn("high resolution timer unavailable; frame pacing will rely on the system timer");
         }
+    }
+
+    /// <summary>
+    /// Changes the ceiling while the pet is running, from the editor's frame-rate
+    /// setting. Zero means no ceiling. The next frame re-establishes the phase
+    /// instead of borrowing the old one: the interval that phase was measured
+    /// against no longer exists.
+    /// </summary>
+    public void SetTarget(double framesPerSecond)
+    {
+        _targetSeconds = framesPerSecond > 0 ? 1.0 / framesPerSecond : 0;
+        _nextFrameTime = 0;
     }
 
     /// <summary>Blocks until the next frame is due. No-op when pacing is disabled.</summary>

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Live2DPet.Cubism;
+using Live2DPet.Serialization;
 
 namespace Live2DPet.Motion;
 
@@ -9,12 +10,12 @@ namespace Live2DPet.Motion;
 /// building a reaction.
 ///
 /// A model's expressions are not all the same kind of thing. Some are a face
-/// (happy, blush); some are something worn (glasses, a hairband, a sticker);
-/// some are the setting itself (a dark tablecloth, a cup of tea). They are one
-/// mechanism in the file format - a set of parameter overrides - but three
-/// different intentions,
-/// and the intention decides what replaces what: switching the scene must not
-/// take the glasses off, and putting on a face must not put the table away.
+/// (a smile, a blush); some are something worn (glasses, a headband, a sticker);
+/// some are the setting itself (a dark tablecloth, a holiday backdrop, a stage
+/// set). They are one mechanism in the file format - a set of parameter
+/// overrides - but three different intentions, and the intention decides what
+/// replaces what: switching the scene must not take the glasses off, and putting
+/// on a face must not put the table away.
 /// </summary>
 internal static class InteractionSlot
 {
@@ -90,7 +91,7 @@ internal sealed class Expression
 
     public static Expression Load(string name, string path)
     {
-        var json = JsonSerializer.Deserialize<Expression3Json>(File.ReadAllText(path))
+        var json = JsonSerializer.Deserialize(File.ReadAllText(path), PetJson.Default.Expression3Json)
                    ?? throw new InvalidDataException($"could not parse {path}");
 
         var parameters = new List<ExpressionParameter>(json.Parameters.Count);
@@ -115,7 +116,7 @@ internal sealed class Expression
         return new Expression { Name = name, SourcePath = path, Parameters = parameters.ToArray() };
     }
 
-    private sealed class Expression3Json
+    internal sealed class Expression3Json
     {
         [JsonPropertyName("Type")]
         public string? Type { get; set; }

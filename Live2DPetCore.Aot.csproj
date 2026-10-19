@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The same engine as Live2DPetCore.csproj, built as a native single-file
+    executable. Two project files rather than a property on one so a plain
+    `dotnet build` stays the fast JIT build, and the AOT build is the deliberate
+    command in the README.
+
+    obj/ and bin/ are moved aside because both projects live in this folder;
+    without that, the two builds would overwrite each other's intermediates.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishAot>true</PublishAot>
+    <!-- The release binary must not carry a local PDB path or stack-trace
+         source metadata. Neither is needed to run the pet. -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <RootNamespace>Live2DPet</RootNamespace>
+    <AssemblyName>Live2DPetCore</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <BaseIntermediateOutputPath>obj\aot\</BaseIntermediateOutputPath>
+    <OutputPath>bin\aot\</OutputPath>
+  </PropertyGroup>
+
+  <!-- Explicit rather than the SDK's default glob: both project files live in
+       this folder, and the generated AssemblyInfo under obj\aot must not be
+       compiled a second time. -->
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="Animation\*.cs" />
+    <Compile Include="App\*.cs" />
+    <Compile Include="Cubism\*.cs" />
+    <Compile Include="Model\*.cs" />
+    <Compile Include="Motion\*.cs" />
+    <Compile Include="Physics\*.cs" />
+    <Compile Include="Platform\*.cs" />
+    <Compile Include="Rendering\*.cs" />
+    <Compile Include="Serialization\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="third_party\Live2DCubismCore.dll">
+      <Link>Live2DCubismCore.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="third_party\LICENSE-Live2D-CubismCore.md">
+      <Link>LICENSE-Live2D-CubismCore.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

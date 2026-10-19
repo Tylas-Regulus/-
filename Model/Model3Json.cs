@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Live2DPet.Serialization;
 
 namespace Live2DPet.Model;
 
@@ -91,7 +92,7 @@ internal sealed class Model3Json
     public static Model3Json Load(string path)
     {
         var json = File.ReadAllText(path);
-        var model = JsonSerializer.Deserialize<Model3Json>(json)
+        var model = JsonSerializer.Deserialize(json, PetJson.Default.Model3Json)
                     ?? throw new InvalidDataException($"could not parse {path}");
 
         if (string.IsNullOrWhiteSpace(model.Files?.Moc))

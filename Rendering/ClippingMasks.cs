@@ -89,7 +89,12 @@ internal sealed class ClippingContext
         // line. Kept switchable so the difference can be captured and compared.
         if (frameOnContent)
         {
-            Accumulate(model, ClippedDrawables, ref minX, ref minY, ref maxX, ref maxY);
+            // Only what is actually on screen. A model can carry art its parameters
+            // have hidden - this one hides twenty-odd tools and a whole second outfit
+            // - and a hidden drawable is still somewhere in model space: its bounds
+            // stretched every context's box to the size of the whole character, which
+            // is what made those masks too coarse to cut with.
+            Accumulate(model, ClippedDrawables, ref minX, ref minY, ref maxX, ref maxY, visibleOnly: true);
         }
 
         // A mask sampled outside its own texture clamps to the edge, and the
@@ -159,11 +164,18 @@ internal sealed class ClippingContext
         ref float minX,
         ref float minY,
         ref float maxX,
-        ref float maxY)
+        ref float maxY,
+        bool visibleOnly = false)
     {
         foreach (var index in drawables)
         {
             if ((uint)index >= (uint)model.Drawables.Length)
+            {
+                continue;
+            }
+
+            if (visibleOnly &&
+                (!model.IsDrawableVisible(index) || model.GetDrawableOpacity(index) <= 0.001f))
             {
                 continue;
             }
@@ -338,7 +350,11 @@ internal sealed class ClippingMasks : IDisposable
 
     public ID3D11ShaderResourceView Resource(int bufferIndex) => _resources[bufferIndex];
 
-    public void UpdateLayouts(CubismModel model, bool frameOnContent = true)
+    /// <summary>The mask texture itself, for the diagnostic that copies it out.
+    /// Nothing in the render path should need this.</summary>
+    public ID3D11Texture2D Texture(int bufferIndex) => _textures[bufferIndex];
+
+    public void UpdateLayouts(CubismModel model, bool frameOnContent = false)
     {
         var needingRoom = 0;
         var worst = 0f;

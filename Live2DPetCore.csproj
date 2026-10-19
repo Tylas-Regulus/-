@@ -17,7 +17,6 @@
     <SelfContained>false</SelfContained>
     <RootNamespace>Live2DPet</RootNamespace>
     <AssemblyName>Live2DPetCore</AssemblyName>
-    <ApplicationIcon>assets\live2dpet.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
@@ -28,12 +27,6 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="assets\live2dpet.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
   <!--

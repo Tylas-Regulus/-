@@ -244,15 +244,38 @@ internal sealed unsafe class CubismModel : IDisposable
     }
 
     public (float MinX, float MinY, float MaxX, float MaxY) ComputeDefaultPoseBounds()
+        => ComputePoseBounds(visibleOnly: false);
+
+    /// <summary>
+    /// The same box, but measured over the drawables that are actually on screen.
+    ///
+    /// A model can carry art its parameters have hidden - a whole second outfit, a
+    /// rack of props - and everything in it is still somewhere in model space. The
+    /// box over all of it is then the box of the <em>file</em> rather than of the
+    /// pet, which is what makes a character sit small and low inside its own window,
+    /// and what makes growing that window look like the pet sinking towards the
+    /// taskbar. This is the box a resize should be anchored on.
+    /// </summary>
+    public (float MinX, float MinY, float MaxX, float MaxY) ComputeVisiblePoseBounds()
+        => ComputePoseBounds(visibleOnly: true);
+
+    private (float MinX, float MinY, float MaxX, float MaxY) ComputePoseBounds(bool visibleOnly)
     {
         var minX = float.MaxValue;
         var minY = float.MaxValue;
         var maxX = float.MinValue;
         var maxY = float.MinValue;
 
-        foreach (var drawable in Drawables)
+        for (var i = 0; i < Drawables.Length; i++)
         {
+            var drawable = Drawables[i];
+
             if (drawable.VertexCount == 0)
+            {
+                continue;
+            }
+
+            if (visibleOnly && (!IsDrawableVisible(i) || GetDrawableOpacity(i) <= 0.001f))
             {
                 continue;
             }

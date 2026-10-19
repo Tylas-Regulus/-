@@ -45,6 +45,23 @@ internal sealed unsafe class WindowShaper
     private Vector2[] _positions = [];
     private bool _havePositions;
 
+    /// <summary>The window size the current region was built for, so a resize is
+    /// noticed even when the pet has not moved an inch.</summary>
+    private int _width;
+    private int _height;
+
+    /// <summary>
+    /// The view the region in hand was built for.
+    ///
+    /// A window resize is the only thing the size check above notices, and it is not
+    /// the only thing that moves the picture: a zoom changes the view inside a window
+    /// that never changes size. Without this, a shape built for the pet at one size
+    /// stays on a pet drawn at another - which is a character with its edges cut off
+    /// by a shape from a moment ago.
+    /// </summary>
+    private ModelFraming _framing;
+    private bool _haveFraming;
+
     /// <summary>
     /// How much of the mask has to change before the window is reshaped, as a
     /// fraction of the window. Breathing moves the outline by a cell or two all
@@ -119,6 +136,16 @@ internal sealed unsafe class WindowShaper
     /// <summary>Rebuilds the mask and reshapes the window if the pet moved.</summary>
     public void Update(int width, int height, in ModelFraming framing)
     {
+        // A resize moves the goalposts without moving the vertices: the region
+        // belongs to the window, so a window that has changed size needs a new one
+        // whether or not the pet moved. Asking only about the vertices left the
+        // shape behind at the size before, and the model was then cut by a
+        // staircase that no longer matched where it was.
+        var resized = width != _width || height != _height;
+        var reframed = !_haveFraming ||
+            framing.MinX != _framing.MinX || framing.MinY != _framing.MinY ||
+            framing.MaxX != _framing.MaxX || framing.MaxY != _framing.MaxY;
+
         // How far the artwork has moved since the shape was last built. Below
         // half the margin, the shape cannot be cutting anything off.
         //
@@ -128,10 +155,15 @@ internal sealed unsafe class WindowShaper
         var unitsPerPixel = framing.UnitsPerPixel(width, height);
         var moved = MaxMovement() / unitsPerPixel;
 
-        if (_havePositions && moved < RebuildDistancePixels)
+        if (_havePositions && !resized && !reframed && moved < RebuildDistancePixels)
         {
             return;
         }
+
+        _width = width;
+        _height = height;
+        _framing = framing;
+        _haveFraming = true;
 
         Snapshot();
 
